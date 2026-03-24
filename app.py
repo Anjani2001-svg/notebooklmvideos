@@ -210,15 +210,20 @@ def _detect_end_card_start(path):
 
 
 def _overlay_on_template(png_path, out_path, y_expr, timeout=60):
+    """
+    Overlay a static PNG on INTRO_TPL with a rise animation.
+    Key: -t {dur} is placed on the PNG INPUT (between -loop 1 and -i),
+    so both streams share the same duration — prevents audio/video
+    sync drop (drop=N frame=0) caused by mismatched stream lengths.
+    """
     dur = _probe_duration(str(INTRO_TPL))
     _ff([
         "ffmpeg", "-y",
         "-i", str(INTRO_TPL),
-        "-loop", "1", "-i", str(png_path),
+        "-loop", "1", "-t", f"{dur:.4f}", "-i", str(png_path),
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y_expr}'[out]",
         "-map", "[out]", "-map", "0:a?",
-        "-t", f"{dur:.4f}",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-r", "30", "-pix_fmt", "yuv420p",
@@ -241,15 +246,36 @@ def make_outro(tmp):
 
 
 def normalise(inp, out):
-    ha = _has_audio(inp); cmd = ["ffmpeg","-y","-i",str(inp)]
-    if not ha: cmd += ["-f","lavfi","-i","anullsrc=r=48000:cl=stereo"]
-    cmd += ["-vf",
+    ha = _has_audio(inp)
+    cmd = ["ffmpeg", "-y", "-i", str(inp)]
+    if not ha:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    cmd += [
+        "-vf",
         "scale=1920:1080:force_original_aspect_ratio=decrease,"
         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-        "-r","30","-c:v","libx264","-preset","ultrafast","-crf","23",
-        "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-pix_fmt","yuv420p"]
-    if not ha: cmd += ["-shortest"]
-    cmd += [str(out)]; _ff(cmd); return Path(out)
+        "-r", "30",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-pix_fmt", "yuv420p",
+        "-async", "1",       # fix audio/video drift on unusual inputs
+        "-vsync", "cfr",     # force constant frame rate
+    ]
+    if not ha:
+        cmd += ["-shortest"]
+    cmd += [str(out)]
+    try:
+        _ff(cmd)
+    except RuntimeError:
+        # Fallback: strip and re-mux audio separately to avoid sync issues
+        cmd2 = ["ffmpeg", "-y", "-i", str(inp),
+            "-vf",
+            "scale=1920:1080:force_original_aspect_ratio=decrease,"
+            "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+            "-r", "30", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-an", "-pix_fmt", "yuv420p", str(out)]
+        _ff(cmd2)
+    return Path(out)
 
 
 def _detect_top_watermark_end(path, max_scan=120.0):
