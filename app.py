@@ -155,33 +155,38 @@ def make_intro_video(
     overlay = render_intro_overlay(course, unit_num, unit_title)
     save_png(overlay, overlay_png)
 
-    # Overlay with rise animation (translate Y from +60 → 0, fade in)
-    rise_frames = int(rise_duration * fps)
-    vf = (
-        f"overlay=0:0:enable='gte(t,0)',"
-        f"fade=in:st=0:d={rise_duration}"
+    # filter_complex: convert base to rgba first, then overlay the PNG (which is RGBA),
+    # then fade in, then convert to yuv420p for H.264
+    fc_no_tpl = (
+        f"[0:v]format=rgba[base];"
+        f"[base][1:v]overlay=0:0:format=auto[ov];"
+        f"[ov]fade=in:st=0:d={rise_duration}[v]"
+    )
+    fc_tpl = (
+        f"[0:v]format=rgba[base];"
+        f"[base][1:v]overlay=0:0:format=auto[ov];"
+        f"[ov]fade=in:st=0:d={rise_duration}[v]"
     )
 
     if not INTRO_TPL.exists():
         # No template — create a 5-second black intro with overlay
         _run([
             "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s=1920x1080:r={fps}:d=5",
-            "-i", str(overlay_png),
-            "-filter_complex",
-            f"[0:v][1:v]overlay=0:0,fade=in:st=0:d={rise_duration}[v]",
+            "-f", "lavfi", "-i", f"color=c=black:s=1920x1080:r={fps}",
+            "-loop", "1", "-i", str(overlay_png),
+            "-filter_complex", fc_no_tpl,
             "-map", "[v]",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-t", "5",
+            "-pix_fmt", "yuv420p",
+            "-t", "5",
             str(intro_out)
         ], "intro_no_template")
     else:
         _run([
             "ffmpeg", "-y",
             "-i", str(INTRO_TPL),
-            "-i", str(overlay_png),
-            "-filter_complex",
-            f"[0:v][1:v]overlay=0:0,fade=in:st=0:d={rise_duration}[v]",
+            "-loop", "1", "-i", str(overlay_png),
+            "-filter_complex", fc_tpl,
             "-map", "[v]", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-pix_fmt", "yuv420p",
@@ -203,12 +208,14 @@ def make_outro_video(session_dir: Path, duration=4, fps=25) -> Path:
 
     _run([
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=black:s=1920x1080:r={fps}:d={duration}",
-        "-i", str(overlay_png),
-        "-filter_complex", "[0:v][1:v]overlay=0:0[v]",
+        "-f", "lavfi", "-i", f"color=c=black:s=1920x1080:r={fps}",
+        "-loop", "1", "-i", str(overlay_png),
+        "-filter_complex",
+        "[0:v]format=rgba[base];[base][1:v]overlay=0:0:format=auto[v]",
         "-map", "[v]",
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p",
+        "-t", str(duration),
         str(outro_out)
     ], "outro")
 
