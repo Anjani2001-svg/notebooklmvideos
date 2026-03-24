@@ -552,7 +552,7 @@ with c1:
 if st.button("👁 Preview Intro", type="secondary"):
     if course_name and unit_number:
         with st.spinner("Rendering…"):
-            st.image(preview_frame(course_name, unit_number, ""), caption="Intro Preview", use_container_width=True)
+            st.image(preview_frame(course_name, unit_number, ""), caption="Intro Preview", use_column_width=True)
     else:
         st.warning("Enter course name and unit number first.")
 st.markdown("---")
