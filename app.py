@@ -209,18 +209,32 @@ def _detect_end_card_start(path):
     return max(0.0, total-9.0)
 
 
-def _overlay_on_template(png_path, out_path, y_expr, timeout=60):
+def _overlay_on_template(png_path, out_path, y_expr, timeout=90):
     """
-    Overlay a static PNG on INTRO_TPL with a rise animation.
-    Key: -t {dur} is placed on the PNG INPUT (between -loop 1 and -i),
-    so both streams share the same duration — prevents audio/video
-    sync drop (drop=N frame=0) caused by mismatched stream lengths.
+    Two-step overlay: PNG -> silent video first, then overlay two videos.
+    Avoids -loop 1 mixed with video input which causes audio frame drops
+    (drop=N, frame=0) regardless of where -t is placed.
     """
     dur = _probe_duration(str(INTRO_TPL))
+    png_vid = Path(str(out_path).replace(".mp4", "_pngvid.mp4"))
+
+    # Step 1: PNG -> fixed-duration silent video (no audio stream)
+    _ff([
+        "ffmpeg", "-y",
+        "-loop", "1", "-framerate", "30", "-t", f"{dur:.4f}",
+        "-i", str(png_path),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-pix_fmt", "yuva420p",   # keep alpha
+        "-vf", "format=rgba",
+        "-an",
+        str(png_vid)
+    ], timeout=30)
+
+    # Step 2: overlay png_vid on INTRO_TPL — both are finite videos, no sync issues
     _ff([
         "ffmpeg", "-y",
         "-i", str(INTRO_TPL),
-        "-loop", "1", "-t", f"{dur:.4f}", "-i", str(png_path),
+        "-i", str(png_vid),
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y_expr}'[out]",
         "-map", "[out]", "-map", "0:a?",
@@ -229,6 +243,10 @@ def _overlay_on_template(png_path, out_path, y_expr, timeout=60):
         "-r", "30", "-pix_fmt", "yuv420p",
         str(out_path)
     ], timeout=timeout)
+
+    # Cleanup intermediate
+    try: png_vid.unlink()
+    except: pass
 
 
 def make_intro(course, unit_num, unit_title, tmp):
